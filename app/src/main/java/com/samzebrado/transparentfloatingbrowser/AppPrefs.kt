@@ -7,4 +7,8 @@ object AppPrefs {
     const val DEFAULT_HANDLE_SIZE_DP = 20
     const val MIN_HANDLE_SIZE_DP = 8
     const val MAX_HANDLE_SIZE_DP = 36
+    const val KEY_LANGUAGE = "language"
+    const val LANGUAGE_EN = "en"
+    const val LANGUAGE_ZH = "zh"
+    const val KEY_FIRST_LAUNCH = "first_launch"
 }

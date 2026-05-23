@@ -67,7 +67,7 @@ class FloatingWebViewService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (overlayView == null) {
-            val url = intent?.getStringExtra(EXTRA_URL) ?: "https://SamZebrado.github.io/NewMarsHeartBeat/?transparent=1"
+            val url = intent?.getStringExtra(EXTRA_URL) ?: getString(R.string.default_url)
             addOverlayView(url)
         }
         return START_NOT_STICKY
@@ -91,7 +91,7 @@ class FloatingWebViewService : Service() {
             addControlBubble()
         } catch (e: Exception) {
             Log.e(TAG, "Failed to add overlay", e)
-            Toast.makeText(this, "Failed to show overlay", Toast.LENGTH_SHORT).show()
+            Toast.makeText(this, R.string.toast_overlay_failed, Toast.LENGTH_SHORT).show()
             cleanupOnFailure()
         }
     }

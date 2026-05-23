@@ -7,6 +7,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import android.view.Gravity
 import android.view.View
 import android.widget.Button
 import android.widget.EditText
@@ -19,29 +20,69 @@ class MainActivity : Activity() {
 
     private lateinit var etUrl: EditText
     private lateinit var tvHandleSize: TextView
+    private lateinit var langButton: Button
+
+    override fun attachBaseContext(newBase: Context) {
+        val lang = LocaleHelper.getLanguage(newBase)
+        super.attachBaseContext(LocaleHelper.setLocale(newBase, lang))
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        val headerLayout = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL or Gravity.END
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+        }
+
+        langButton = Button(this).apply {
+            text = LocaleHelper.getLanguageButtonText(this@MainActivity)
+            layoutParams = LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT
+            )
+            setOnClickListener {
+                val currentLang = LocaleHelper.getLanguage(this@MainActivity)
+                val newLang = if (currentLang == AppPrefs.LANGUAGE_ZH) {
+                    AppPrefs.LANGUAGE_EN
+                } else {
+                    AppPrefs.LANGUAGE_ZH
+                }
+                LocaleHelper.saveLanguage(this@MainActivity, newLang)
+                recreate()
+            }
+        }
+        headerLayout.addView(langButton)
 
         val layout = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(32, 32, 32, 32)
         }
+        layout.addView(headerLayout)
+
+        val urlLabel = TextView(this).apply {
+            text = getString(R.string.url_input_label)
+        }
+        layout.addView(urlLabel)
 
         etUrl = EditText(this).apply {
-            hint = resources.getString(R.string.url_hint)
+            hint = getString(R.string.url_hint)
             inputType = android.text.InputType.TYPE_TEXT_VARIATION_URI
         }
         layout.addView(etUrl)
 
         val btnCheckPermission = Button(this).apply {
-            text = resources.getString(R.string.check_permission)
+            text = getString(R.string.btn_check_permission)
             setOnClickListener { checkOverlayPermission() }
         }
         layout.addView(btnCheckPermission)
 
         val btnStartService = Button(this).apply {
-            text = resources.getString(R.string.start_service)
+            text = getString(R.string.btn_start_service)
             setOnClickListener {
                 saveUrl()
                 startFloatingService()
@@ -50,13 +91,13 @@ class MainActivity : Activity() {
         layout.addView(btnStartService)
 
         val btnStopService = Button(this).apply {
-            text = resources.getString(R.string.stop_service)
+            text = getString(R.string.btn_stop_service)
             setOnClickListener { stopFloatingService() }
         }
         layout.addView(btnStopService)
 
         val handleSizeLabel = TextView(this).apply {
-            text = "Handle Size (Edit mode only)"
+            text = getString(R.string.handle_size_label)
             setPadding(0, 16, 0, 8)
         }
         layout.addView(handleSizeLabel)
@@ -98,7 +139,13 @@ class MainActivity : Activity() {
 
     private fun normalizeUrl(raw: String): String {
         val trimmed = raw.trim()
-        if (trimmed.startsWith("http://") || trimmed.startsWith("https://")) {
+        if (trimmed.isEmpty()) {
+            Toast.makeText(this, R.string.toast_url_empty, Toast.LENGTH_SHORT).show()
+            return getString(R.string.default_url)
+        }
+        if (trimmed.startsWith("http://", ignoreCase = true) ||
+            trimmed.startsWith("https://", ignoreCase = true)
+        ) {
             return trimmed
         }
         return "http://$trimmed"
@@ -120,7 +167,7 @@ class MainActivity : Activity() {
                 startActivity(intent)
                 Toast.makeText(this, R.string.permission_denied, Toast.LENGTH_SHORT).show()
             } else {
-                Toast.makeText(this, R.string.permission_granted, Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, R.string.permission_already_granted, Toast.LENGTH_SHORT).show()
             }
         }
     }

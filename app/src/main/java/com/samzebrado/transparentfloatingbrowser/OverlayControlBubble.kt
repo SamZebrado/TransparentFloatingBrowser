@@ -24,8 +24,10 @@ class OverlayControlBubble(
             setBackgroundColor(Color.TRANSPARENT)
         }
 
+        val editMode = context.getString(R.string.mode_edit)
+
         buttonText = Button(context).apply {
-            text = "EDIT"
+            text = editMode
             setPadding(20, 20, 20, 20)
             setBackgroundColor(Color.parseColor("#FF5722"))
             setTextColor(Color.WHITE)
@@ -66,9 +68,11 @@ class OverlayControlBubble(
     }
 
     fun setMode(mode: OverlayMode) {
+        val editMode = context.getString(R.string.mode_edit)
+        val displayMode = context.getString(R.string.mode_display)
         buttonText?.text = when (mode) {
-            OverlayMode.EDIT -> "EDIT"
-            OverlayMode.DISPLAY -> "VIEW"
+            OverlayMode.EDIT -> editMode
+            OverlayMode.DISPLAY -> displayMode
         }
     }
 
