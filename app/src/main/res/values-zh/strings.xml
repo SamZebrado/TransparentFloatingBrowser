@@ -26,4 +26,12 @@
     <string name="lang_switch_chinese">EN</string>
 
     <string name="url_input_label">网址</string>
+    <string name="control_button_size_label">控制按钮大小（下次启动生效）</string>
+    <string name="toast_restart_overlay_to_apply">大小将在重启悬浮窗后生效</string>
+    <string name="view_mode_alpha_label">View 模式透明度</string>
+    <string name="toast_view_alpha_apply_next_view_mode">透明度会在下次切换到 View 模式时生效</string>
+    <string name="enable_zoom">启用网页双指缩放</string>
+    <string name="transparent_colors_label">透明色（逗号分隔）</string>
+    <string name="transparent_colors_hint">#000000, #FFFFFF, #CCCCCC</string>
+    <string name="toast_transparent_colors_apply">透明色设置会在重启悬浮窗后生效</string>
 </resources>

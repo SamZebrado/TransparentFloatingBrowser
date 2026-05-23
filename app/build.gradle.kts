@@ -11,8 +11,8 @@ android {
         applicationId = "com.samzebrado.transparentfloatingbrowser"
         minSdk = 27
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 2
+        versionName = "1.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -36,5 +36,6 @@ android {
 }
 
 dependencies {
+    implementation("androidx.core:core-ktx:1.13.1")
     testImplementation("junit:junit:4.13.2")
 }

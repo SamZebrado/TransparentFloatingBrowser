@@ -3,6 +3,7 @@ package com.samzebrado.transparentfloatingbrowser
 import android.content.Context
 import android.graphics.Color
 import android.util.Log
+import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.webkit.WebView
@@ -22,12 +23,68 @@ class FloatingWebViewController(
     private var dragHandle: View? = null
     private var resizeHandle: View? = null
 
+    private var onPositionChangedListener: ((Int, Int) -> Unit)? = null
+    private var onSizeChangedListener: ((Int, Int) -> Unit)? = null
+    private var currentMode: OverlayMode = OverlayMode.EDIT
+
+    private var initialX = 0
+    private var initialY = 0
+    private var initialTouchX = 0f
+    private var initialTouchY = 0f
+    private var lastTouchX = 0f
+    private var lastTouchY = 0f
+    private var initialWidth = 0
+    private var initialHeight = 0
+
+    private val touchSlopPx: Float by lazy {
+        8f * context.resources.displayMetrics.density
+    }
+
+    private var isDragging = false
+    private var isResizing = false
+
+    fun setMode(mode: OverlayMode) {
+        currentMode = mode
+    }
+
+    fun setOnPositionChangedListener(listener: (Int, Int) -> Unit) {
+        onPositionChangedListener = listener
+    }
+
+    fun setOnSizeChangedListener(listener: (Int, Int) -> Unit) {
+        onSizeChangedListener = listener
+    }
+
+    private fun isZoomEnabled(): Boolean {
+        val prefs = context.getSharedPreferences(AppPrefs.MAIN_PREFS, Context.MODE_PRIVATE)
+        return prefs.getBoolean(
+            AppPrefs.KEY_ENABLE_WEBVIEW_ZOOM,
+            AppPrefs.DEFAULT_ENABLE_WEBVIEW_ZOOM
+        )
+    }
+
+    private fun getTransparentColors(): List<String> {
+        val prefs = context.getSharedPreferences(AppPrefs.MAIN_PREFS, Context.MODE_PRIVATE)
+        val colorsString = prefs.getString(
+            AppPrefs.KEY_TRANSPARENT_COLORS,
+            AppPrefs.DEFAULT_TRANSPARENT_COLORS
+        ) ?: AppPrefs.DEFAULT_TRANSPARENT_COLORS
+
+        return colorsString.split(",", " ", "\n", ";")
+            .map { it.trim() }
+            .filter { it.matches(Regex("^#?[0-9a-fA-F]{6}$")) }
+            .map { if (it.startsWith("#")) it.uppercase() else "#${it.uppercase()}" }
+            .distinct()
+            .ifEmpty { listOf(AppPrefs.DEFAULT_TRANSPARENT_COLORS) }
+    }
+
     fun createView(): View {
         containerView = FrameLayout(context).apply {
             setBackgroundColor(Color.TRANSPARENT)
         }
 
-        // WebView
+        val zoomEnabled = isZoomEnabled()
+
         webView = WebView(context).apply {
             setBackgroundColor(Color.TRANSPARENT)
             isVerticalScrollBarEnabled = false
@@ -37,18 +94,22 @@ class FloatingWebViewController(
             settings.domStorageEnabled = true
             settings.mediaPlaybackRequiresUserGesture = false
 
-            settings.setSupportZoom(true)
-            settings.builtInZoomControls = true
+            settings.setSupportZoom(zoomEnabled)
+            settings.builtInZoomControls = zoomEnabled
             settings.displayZoomControls = false
-            settings.useWideViewPort = true
-            settings.loadWithOverviewMode = true
+
+            if (zoomEnabled) {
+                settings.useWideViewPort = true
+                settings.loadWithOverviewMode = true
+            }
 
             webViewClient = object : WebViewClient() {
                 override fun onPageFinished(view: WebView?, url: String?) {
                     super.onPageFinished(view, url)
                     Log.d(TAG, "onPageFinished: $url")
                     if (view != null) {
-                        TransparentStyleInjector.inject(view) { result ->
+                        val colorKeys = getTransparentColors()
+                        TransparentStyleInjector.inject(view, colorKeys) { result ->
                             Log.d(TAG, "Transparent injection result: $result")
                         }
                     }
@@ -56,7 +117,6 @@ class FloatingWebViewController(
             }
         }
 
-        // Top drag handle
         dragHandle = View(context).apply {
             val density = resources.displayMetrics.density
             val prefs = context.getSharedPreferences(AppPrefs.MAIN_PREFS, Context.MODE_PRIVATE)
@@ -65,10 +125,44 @@ class FloatingWebViewController(
             layoutParams = FrameLayout.LayoutParams(MATCH_PARENT, heightPx).apply {
                 gravity = android.view.Gravity.TOP
             }
-            setBackgroundColor(Color.parseColor("#6633B5E5")) // Semi-transparent cyan
+            setBackgroundColor(Color.parseColor("#6633B5E5"))
+
+            setOnTouchListener { _, event ->
+                when (event.action) {
+                    MotionEvent.ACTION_DOWN -> {
+                        initialTouchX = event.rawX
+                        initialTouchY = event.rawY
+                        lastTouchX = event.rawX
+                        lastTouchY = event.rawY
+                        isDragging = false
+                        true
+                    }
+                    MotionEvent.ACTION_MOVE -> {
+                        val totalDeltaX = event.rawX - initialTouchX
+                        val totalDeltaY = event.rawY - initialTouchY
+
+                        if (!isDragging && (kotlin.math.abs(totalDeltaX) > touchSlopPx || kotlin.math.abs(totalDeltaY) > touchSlopPx)) {
+                            isDragging = true
+                        }
+
+                        if (isDragging) {
+                            val frameDeltaX = event.rawX - lastTouchX
+                            val frameDeltaY = event.rawY - lastTouchY
+                            lastTouchX = event.rawX
+                            lastTouchY = event.rawY
+                            onPositionChangedListener?.invoke(frameDeltaX.toInt(), frameDeltaY.toInt())
+                        }
+                        true
+                    }
+                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                        isDragging = false
+                        true
+                    }
+                    else -> false
+                }
+            }
         }
 
-        // Bottom-right resize handle
         resizeHandle = View(context).apply {
             val density = resources.displayMetrics.density
             val prefs = context.getSharedPreferences(AppPrefs.MAIN_PREFS, Context.MODE_PRIVATE)
@@ -77,7 +171,42 @@ class FloatingWebViewController(
             layoutParams = FrameLayout.LayoutParams(sizePx, sizePx).apply {
                 gravity = android.view.Gravity.BOTTOM or android.view.Gravity.END
             }
-            setBackgroundColor(Color.parseColor("#66FF9800")) // Semi-transparent orange
+            setBackgroundColor(Color.parseColor("#66FF9800"))
+
+            setOnTouchListener { _, event ->
+                when (event.action) {
+                    MotionEvent.ACTION_DOWN -> {
+                        initialTouchX = event.rawX
+                        initialTouchY = event.rawY
+                        lastTouchX = event.rawX
+                        lastTouchY = event.rawY
+                        isResizing = false
+                        true
+                    }
+                    MotionEvent.ACTION_MOVE -> {
+                        val totalDeltaX = event.rawX - initialTouchX
+                        val totalDeltaY = event.rawY - initialTouchY
+
+                        if (!isResizing && (kotlin.math.abs(totalDeltaX) > touchSlopPx || kotlin.math.abs(totalDeltaY) > touchSlopPx)) {
+                            isResizing = true
+                        }
+
+                        if (isResizing) {
+                            val frameDeltaX = event.rawX - lastTouchX
+                            val frameDeltaY = event.rawY - lastTouchY
+                            lastTouchX = event.rawX
+                            lastTouchY = event.rawY
+                            onSizeChangedListener?.invoke(frameDeltaX.toInt(), frameDeltaY.toInt())
+                        }
+                        true
+                    }
+                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                        isResizing = false
+                        true
+                    }
+                    else -> false
+                }
+            }
         }
 
         containerView?.apply {
@@ -105,15 +234,23 @@ class FloatingWebViewController(
         resizeHandle?.visibility = visibility
     }
 
+    fun setInitialPosition(x: Int, y: Int) {
+        initialX = x
+        initialY = y
+    }
+
+    fun setInitialSize(width: Int, height: Int) {
+        initialWidth = width
+        initialHeight = height
+    }
+
     fun destroy() {
         webView?.let { wv ->
             wv.stopLoading()
             wv.loadUrl("about:blank")
             wv.clearHistory()
             wv.removeAllViews()
-
             containerView?.removeView(wv)
-
             wv.destroy()
         }
 
@@ -121,5 +258,7 @@ class FloatingWebViewController(
         containerView = null
         dragHandle = null
         resizeHandle = null
+        onPositionChangedListener = null
+        onSizeChangedListener = null
     }
 }

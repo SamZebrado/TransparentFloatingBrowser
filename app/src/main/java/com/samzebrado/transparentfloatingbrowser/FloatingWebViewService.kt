@@ -1,204 +1,455 @@
 package com.samzebrado.transparentfloatingbrowser
 
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.graphics.PixelFormat
+import android.net.Uri
+import android.os.Build
 import android.os.IBinder
 import android.util.Log
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
-import android.widget.Toast
-
-enum class OverlayMode { EDIT, DISPLAY }
+import androidx.core.app.NotificationCompat
+import org.json.JSONArray
 
 class FloatingWebViewService : Service() {
 
     companion object {
         private const val TAG = "FloatingWebViewService"
-        private const val OVERLAY_WIDTH_DP = 320
-        private const val OVERLAY_HEIGHT_DP = 220
-        private const val EXTRA_URL = "url"
-        private const val MIN_WIDTH_DP = 180
-        private const val MIN_HEIGHT_DP = 120
-        private const val PREFS_NAME = "FloatingWebViewPrefs"
-        private const val KEY_OVERLAY_X = "overlay_x"
-        private const val KEY_OVERLAY_Y = "overlay_y"
-        private const val KEY_OVERLAY_WIDTH = "overlay_width"
-        private const val KEY_OVERLAY_HEIGHT = "overlay_height"
+        const val PREFS_NAME = "FloatingWebViewServicePrefs"
+        const val KEY_WINDOWS_JSON = "windows_json"
 
-        fun start(context: Context, url: String) {
+        private const val NOTIFICATION_ID = 1001
+        private const val CHANNEL_ID = "TransparentFloatingBrowser"
+
+        private const val ACTION_START = "com.samzebrado.transparentfloatingbrowser.START"
+        private const val ACTION_STOP = "com.samzebrado.transparentfloatingbrowser.STOP"
+        private const val ACTION_TOGGLE_MODE = "com.samzebrado.transparentfloatingbrowser.TOGGLE_MODE"
+        private const val ACTION_ADD_WINDOW = "com.samzebrado.transparentfloatingbrowser.ADD_WINDOW"
+        private const val ACTION_ADD_WINDOW_CONFIG = "com.samzebrado.transparentfloatingbrowser.ADD_WINDOW_CONFIG"
+        private const val ACTION_REMOVE_WINDOW = "com.samzebrado.transparentfloatingbrowser.REMOVE_WINDOW"
+        private const val ACTION_SET_WINDOW_VISIBLE = "com.samzebrado.transparentfloatingbrowser.SET_WINDOW_VISIBLE"
+        private const val EXTRA_URL = "url"
+        private const val EXTRA_WINDOW_ID = "window_id"
+        private const val EXTRA_WINDOW_CONFIG_JSON = "window_config_json"
+        private const val EXTRA_WINDOW_VISIBLE = "window_visible"
+        private const val MAX_WINDOWS = 3
+
+        fun start(context: Context, url: String? = null) {
             val intent = Intent(context, FloatingWebViewService::class.java).apply {
-                putExtra(EXTRA_URL, url)
+                action = ACTION_START
+                url?.let { putExtra(EXTRA_URL, it) }
+            }
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                context.startForegroundService(intent)
+            } else {
+                context.startService(intent)
+            }
+        }
+
+        fun stop(context: Context) {
+            val intent = Intent(context, FloatingWebViewService::class.java).apply {
+                action = ACTION_STOP
+            }
+            context.startService(intent)
+        }
+
+        fun toggleMode(context: Context) {
+            val intent = Intent(context, FloatingWebViewService::class.java).apply {
+                action = ACTION_TOGGLE_MODE
+            }
+            context.startService(intent)
+        }
+
+        fun addWindow(context: Context) {
+            val intent = Intent(context, FloatingWebViewService::class.java).apply {
+                action = ACTION_ADD_WINDOW
+            }
+            context.startService(intent)
+        }
+
+        fun removeWindow(context: Context, windowId: Int) {
+            val intent = Intent(context, FloatingWebViewService::class.java).apply {
+                action = ACTION_REMOVE_WINDOW
+                putExtra(EXTRA_WINDOW_ID, windowId)
+            }
+            context.startService(intent)
+        }
+        
+        fun addWindowWithConfig(context: Context, config: FloatingWindowConfig) {
+            val intent = Intent(context, FloatingWebViewService::class.java).apply {
+                action = ACTION_ADD_WINDOW_CONFIG
+                putExtra(EXTRA_WINDOW_CONFIG_JSON, config.toJson().toString())
+            }
+            context.startService(intent)
+        }
+        
+        fun setWindowVisible(context: Context, windowId: Int, isVisible: Boolean) {
+            val intent = Intent(context, FloatingWebViewService::class.java).apply {
+                action = ACTION_SET_WINDOW_VISIBLE
+                putExtra(EXTRA_WINDOW_ID, windowId)
+                putExtra(EXTRA_WINDOW_VISIBLE, isVisible)
             }
             context.startService(intent)
         }
     }
 
     private var windowManager: WindowManager? = null
-    private var webViewController: FloatingWebViewController? = null
-    private var overlayView: View? = null
-    private var overlayParams: WindowManager.LayoutParams? = null
+    private val windows = linkedMapOf<Int, FloatingWindowInstance>()
+    private var activeWindowId: Int? = null
+    private var currentMode: OverlayMode = OverlayMode.EDIT
     private var controlBubble: OverlayControlBubble? = null
     private var controlBubbleView: View? = null
     private var controlBubbleParams: WindowManager.LayoutParams? = null
-    private var currentMode: OverlayMode = OverlayMode.EDIT
 
-    private var dragInitialX = 0
-    private var dragInitialY = 0
-    private var dragInitialTouchX = 0f
-    private var dragInitialTouchY = 0f
+    private fun normalizeUrlOrNull(rawUrl: String?): String? {
+        val trimmed = rawUrl?.trim().orEmpty()
+        if (trimmed.isBlank()) return null
 
-    private var resizeInitialWidth = 0
-    private var resizeInitialHeight = 0
-    private var resizeInitialTouchX = 0f
-    private var resizeInitialTouchY = 0f
+        val uri = Uri.parse(trimmed)
+        val scheme = uri.scheme?.lowercase()
 
-    override fun onBind(intent: Intent?): IBinder? {
-        return null
+        return when (scheme) {
+            "http", "https", "file" -> trimmed
+            else -> null
+        }
     }
 
     override fun onCreate() {
         super.onCreate()
+        Log.d(TAG, "Service onCreate")
         windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+        createNotificationChannel()
+        startAsForegroundService()
+        loadSavedWindows()
+        addControlBubble()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (overlayView == null) {
-            val url = intent?.getStringExtra(EXTRA_URL) ?: getString(R.string.default_url)
-            addOverlayView(url)
-        }
-        return START_NOT_STICKY
-    }
+        Log.d(TAG, "onStartCommand startId=$startId action=${intent?.action}, windows=${windows.size}, mode=$currentMode")
 
-    private fun addOverlayView(url: String) {
-        try {
-            if (windowManager == null) {
-                windowManager = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+        when (intent?.action) {
+            ACTION_START -> {
+                val url = intent.getStringExtra(EXTRA_URL)
+                handleStart(url)
             }
+            ACTION_STOP -> {
+                stopSelf()
+            }
+            ACTION_TOGGLE_MODE -> {
+                toggleMode()
+            }
+            ACTION_ADD_WINDOW -> {
+                addNewWindow()
+            }
+            ACTION_REMOVE_WINDOW -> {
+                val windowId = intent.getIntExtra(EXTRA_WINDOW_ID, -1)
+                if (windowId != -1) {
+                    removeWindow(windowId)
+                }
+            }
+            ACTION_ADD_WINDOW_CONFIG -> {
+                val configJsonStr = intent.getStringExtra(EXTRA_WINDOW_CONFIG_JSON)
+                if (configJsonStr != null) {
+                    try {
+                        val config = FloatingWindowConfig.fromJson(org.json.JSONObject(configJsonStr))
+                        if (!windows.containsKey(config.id) && windows.size < MAX_WINDOWS) {
+                            addWindow(config)
+                            saveWindows()
+                        }
+                    } catch (e: Exception) {
+                        Log.e(TAG, "Failed to parse window config", e)
+                    }
+                }
+            }
+            ACTION_SET_WINDOW_VISIBLE -> {
+                val windowId = intent.getIntExtra(EXTRA_WINDOW_ID, -1)
+                val isVisible = intent.getBooleanExtra(EXTRA_WINDOW_VISIBLE, true)
+                if (windowId != -1) {
+                    setWindowVisible(windowId, isVisible)
+                }
+            }
+        }
 
-            webViewController = FloatingWebViewController(this)
-            overlayView = webViewController?.createView()
-            webViewController?.setEditHandlesVisible(currentMode == OverlayMode.EDIT)
-            setupOverlayParams()
-            setupTouchListeners()
+        return START_STICKY
+    }
 
-            windowManager?.addView(overlayView, overlayParams)
-            webViewController?.loadUrl(url)
-
-            addControlBubble()
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to add overlay", e)
-            Toast.makeText(this, R.string.toast_overlay_failed, Toast.LENGTH_SHORT).show()
-            cleanupOnFailure()
+    private fun handleStart(url: String?) {
+        if (windows.isEmpty()) {
+            val defaultUrl = url ?: getString(R.string.default_url)
+            val config = FloatingWindowConfig.createDefault(
+                1,
+                defaultUrl,
+                resources.displayMetrics.density
+            )
+            addWindow(config)
         }
     }
 
-    private fun setupOverlayParams() {
-        val density = resources.displayMetrics.density
-        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    private fun addNewWindow() {
+        if (windows.size >= MAX_WINDOWS) {
+            return
+        }
 
-        val defaultWidth = (OVERLAY_WIDTH_DP * density).toInt()
-        val defaultHeight = (OVERLAY_HEIGHT_DP * density).toInt()
-        val defaultX = (100 * density).toInt()
-        val defaultY = (100 * density).toInt()
+        var nextId = 1
+        while (windows.containsKey(nextId)) {
+            nextId++
+        }
 
-        val width = prefs.getInt(KEY_OVERLAY_WIDTH, defaultWidth)
-        val height = prefs.getInt(KEY_OVERLAY_HEIGHT, defaultHeight)
-        val x = prefs.getInt(KEY_OVERLAY_X, defaultX)
-        val y = prefs.getInt(KEY_OVERLAY_Y, defaultY)
+        val defaultUrl = getString(R.string.default_url)
+        val config = FloatingWindowConfig.createDefault(
+            nextId,
+            defaultUrl,
+            resources.displayMetrics.density
+        )
 
-        overlayParams = WindowManager.LayoutParams(
-            width,
-            height,
+        addWindow(config)
+        saveWindows()
+    }
+
+    private fun addWindow(config: FloatingWindowConfig) {
+        val controller = FloatingWebViewController(this)
+        val rootView = controller.createView()
+
+        val params = WindowManager.LayoutParams(
+            config.width,
+            config.height,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
             PixelFormat.TRANSLUCENT
         )
-        overlayParams?.gravity = Gravity.TOP or Gravity.START
-        overlayParams?.x = x
-        overlayParams?.y = y
+        params.gravity = Gravity.TOP or Gravity.START
+        params.x = config.x
+        params.y = config.y
+
+        if (currentMode == OverlayMode.DISPLAY) {
+            params.flags = params.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+            params.alpha = config.viewModeAlpha / 100f
+            controller.setEditHandlesVisible(false)
+        } else {
+            params.alpha = 1f
+            controller.setEditHandlesVisible(true)
+        }
+
+        if (config.isVisible) {
+            windowManager?.addView(rootView, params)
+        }
+
+        val instance = FloatingWindowInstance(
+            id = config.id,
+            config = config,
+            controller = controller,
+            rootView = rootView,
+            params = params
+        )
+
+        windows[config.id] = instance
+
+        if (activeWindowId == null) {
+            activeWindowId = config.id
+            instance.isActive = true
+        }
+
+        controller.setMode(currentMode)
+        controller.setOnPositionChangedListener { deltaX, deltaY ->
+            params.x += deltaX
+            params.y += deltaY
+            instance.config.x = params.x
+            instance.config.y = params.y
+            try {
+                if (rootView.isAttachedToWindow) {
+                    windowManager?.updateViewLayout(rootView, params)
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to update window position", e)
+            }
+            saveWindows()
+        }
+        controller.setOnSizeChangedListener { deltaW, deltaH ->
+            params.width = (params.width + deltaW).coerceAtLeast(100)
+            params.height = (params.height + deltaH).coerceAtLeast(100)
+            instance.config.width = params.width
+            instance.config.height = params.height
+            try {
+                if (rootView.isAttachedToWindow) {
+                    windowManager?.updateViewLayout(rootView, params)
+                }
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to update window size", e)
+            }
+            saveWindows()
+        }
+
+        controller.setInitialPosition(params.x, params.y)
+        controller.setInitialSize(params.width, params.height)
+
+        val validUrl = normalizeUrlOrNull(config.url) ?: getString(R.string.default_url)
+        controller.loadUrl(validUrl)
     }
 
-    private fun setupTouchListeners() {
-        val dragHandle = webViewController?.getDragHandleView()
-        val resizeHandle = webViewController?.getResizeHandleView()
-
-        dragHandle?.setOnTouchListener(object : View.OnTouchListener {
-            override fun onTouch(view: View, event: MotionEvent): Boolean {
-                val params = overlayParams ?: return false
-                when (event.action) {
-                    MotionEvent.ACTION_DOWN -> {
-                        dragInitialX = params.x
-                        dragInitialY = params.y
-                        dragInitialTouchX = event.rawX
-                        dragInitialTouchY = event.rawY
-                        return true
-                    }
-                    MotionEvent.ACTION_MOVE -> {
-                        params.x = dragInitialX + (event.rawX - dragInitialTouchX).toInt()
-                        params.y = dragInitialY + (event.rawY - dragInitialTouchY).toInt()
-                        windowManager?.updateViewLayout(overlayView, params)
-                        return true
-                    }
-                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                        savePosition()
-                        return true
-                    }
-                }
-                return false
+    private fun destroyWindow(instance: FloatingWindowInstance) {
+        try {
+            if (instance.config.isVisible) {
+                windowManager?.removeViewImmediate(instance.rootView)
             }
-        })
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to remove view for window ${instance.id}", e)
+        }
 
-        resizeHandle?.setOnTouchListener(object : View.OnTouchListener {
-            override fun onTouch(view: View, event: MotionEvent): Boolean {
-                val params = overlayParams ?: return false
-                when (event.action) {
-                    MotionEvent.ACTION_DOWN -> {
-                        resizeInitialWidth = params.width
-                        resizeInitialHeight = params.height
-                        resizeInitialTouchX = event.rawX
-                        resizeInitialTouchY = event.rawY
-                        return true
-                    }
-                    MotionEvent.ACTION_MOVE -> {
-                        val density = resources.displayMetrics.density
-                        val minWidth = (MIN_WIDTH_DP * density).toInt()
-                        val minHeight = (MIN_HEIGHT_DP * density).toInt()
+        try {
+            instance.controller.destroy()
+        } catch (e: Exception) {
+            Log.w(TAG, "Failed to destroy controller for window ${instance.id}", e)
+        }
+    }
 
-                        val deltaX = (event.rawX - resizeInitialTouchX).toInt()
-                        val deltaY = (event.rawY - resizeInitialTouchY).toInt()
-
-                        val newWidth = (resizeInitialWidth + deltaX).coerceAtLeast(minWidth)
-                        val newHeight = (resizeInitialHeight + deltaY).coerceAtLeast(minHeight)
-
-                        params.width = newWidth
-                        params.height = newHeight
-                        windowManager?.updateViewLayout(overlayView, params)
-                        return true
-                    }
-                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                        saveSize()
-                        return true
-                    }
-                }
-                return false
+    private fun removeWindow(windowId: Int) {
+        windows[windowId]?.let { instance ->
+            destroyWindow(instance)
+            windows.remove(windowId)
+            if (activeWindowId == windowId) {
+                activeWindowId = windows.keys.firstOrNull()
             }
-        })
+            saveWindows()
+        }
+    }
+    
+    private fun setWindowVisible(windowId: Int, isVisible: Boolean) {
+        windows[windowId]?.let { instance ->
+            instance.config.isVisible = isVisible
+            
+            if (isVisible && !instance.rootView.isAttachedToWindow) {
+                windowManager?.addView(instance.rootView, instance.params)
+            } else if (!isVisible && instance.rootView.isAttachedToWindow) {
+                windowManager?.removeView(instance.rootView)
+            }
+            
+            saveWindows()
+        }
+    }
+
+    private fun toggleMode() {
+        currentMode = if (currentMode == OverlayMode.EDIT) {
+            OverlayMode.DISPLAY
+        } else {
+            OverlayMode.EDIT
+        }
+
+        windows.values.forEach { instance ->
+            applyModeToWindow(instance)
+        }
+
+        controlBubble?.setMode(currentMode)
+    }
+
+    private fun applyModeToWindow(instance: FloatingWindowInstance) {
+        if (!instance.config.isVisible) return
+
+        val params = instance.params
+
+        if (currentMode == OverlayMode.EDIT) {
+            params.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+            params.alpha = 1f
+            instance.controller.setEditHandlesVisible(true)
+        } else {
+            params.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
+                    WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+            params.alpha = instance.config.viewModeAlpha / 100f
+            instance.controller.setEditHandlesVisible(false)
+        }
+
+        try {
+            windowManager?.updateViewLayout(instance.rootView, params)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to update window mode", e)
+        }
+    }
+
+    private fun setWindowVisibility(windowId: Int, visible: Boolean) {
+        windows[windowId]?.let { instance ->
+            if (instance.config.isVisible == visible) return
+
+            if (visible && !instance.config.isVisible) {
+                windowManager?.addView(instance.rootView, instance.params)
+            } else if (!visible && instance.config.isVisible) {
+                try {
+                    windowManager?.removeView(instance.rootView)
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error removing window", e)
+                }
+            }
+
+            instance.config.isVisible = visible
+            saveWindows()
+        }
+    }
+
+    private fun loadSavedWindows() {
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val jsonString = prefs.getString(KEY_WINDOWS_JSON, null)
+
+        if (jsonString != null) {
+            try {
+                val jsonArray = JSONArray(jsonString)
+                for (i in 0 until jsonArray.length()) {
+                    val configJson = jsonArray.getJSONObject(i)
+                    val config = FloatingWindowConfig.fromJson(configJson)
+                    addWindow(config)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error loading windows", e)
+            }
+        }
+    }
+
+    private fun saveWindows() {
+        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+        val jsonArray = JSONArray()
+
+        windows.values.forEach { instance ->
+            jsonArray.put(instance.config.toJson())
+        }
+
+        prefs.edit().putString(KEY_WINDOWS_JSON, jsonArray.toString()).apply()
     }
 
     private fun addControlBubble() {
         try {
+            val density = resources.displayMetrics.density
+            val appPrefs = getSharedPreferences(AppPrefs.MAIN_PREFS, Context.MODE_PRIVATE)
+            val sizeDp = appPrefs.getInt(
+                AppPrefs.KEY_CONTROL_BUTTON_SIZE_DP,
+                AppPrefs.DEFAULT_CONTROL_BUTTON_SIZE_DP
+            )
+            val sizePx = (sizeDp * density).toInt()
+
             controlBubble = OverlayControlBubble(
                 context = this,
                 onToggleMode = { toggleMode() },
                 onClose = { stopSelf() }
             )
-            controlBubbleView = controlBubble?.createView()
-            controlBubbleParams = controlBubble?.getParams()
+            controlBubbleView = controlBubble?.createView(sizePx)
+
+            val defaultX = (AppPrefs.DEFAULT_CONTROL_BUTTON_X * density).toInt()
+            val defaultY = (AppPrefs.DEFAULT_CONTROL_BUTTON_Y * density).toInt()
+
+            controlBubbleParams = controlBubble?.getParams(defaultX, defaultY)
             controlBubble?.setMode(currentMode)
+
+            controlBubble?.setOnPositionChangedListener { x, y ->
+                val prefs = getSharedPreferences(AppPrefs.MAIN_PREFS, Context.MODE_PRIVATE)
+                prefs.edit()
+                    .putInt(AppPrefs.KEY_CONTROL_BUTTON_X, x)
+                    .putInt(AppPrefs.KEY_CONTROL_BUTTON_Y, y)
+                    .apply()
+            }
 
             windowManager?.addView(controlBubbleView, controlBubbleParams)
         } catch (e: Exception) {
@@ -209,106 +460,86 @@ class FloatingWebViewService : Service() {
         }
     }
 
-    private fun toggleMode() {
-        currentMode = when (currentMode) {
-            OverlayMode.EDIT -> OverlayMode.DISPLAY
-            OverlayMode.DISPLAY -> OverlayMode.EDIT
+    private fun createNotification(): Notification {
+        val intent = Intent(this, MainActivity::class.java)
+        val pendingIntent = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            android.app.PendingIntent.getActivity(
+                this,
+                0,
+                intent,
+                android.app.PendingIntent.FLAG_IMMUTABLE or android.app.PendingIntent.FLAG_UPDATE_CURRENT
+            )
+        } else {
+            android.app.PendingIntent.getActivity(
+                this,
+                0,
+                intent,
+                android.app.PendingIntent.FLAG_UPDATE_CURRENT
+            )
         }
-        applyModeToWebOverlay()
-        controlBubble?.setMode(currentMode)
+
+        return NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle("Transparent Floating Browser")
+            .setContentText("Running in background")
+            .setSmallIcon(R.mipmap.ic_launcher)
+            .setContentIntent(pendingIntent)
+            .setOngoing(true)
+            .build()
     }
 
-    private fun applyModeToWebOverlay() {
-        val params = overlayParams ?: return
-        params.flags = when (currentMode) {
-            OverlayMode.EDIT -> WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-            OverlayMode.DISPLAY -> WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
-        }
-
-        webViewController?.setEditHandlesVisible(currentMode == OverlayMode.EDIT)
-
+    private fun startAsForegroundService() {
+        Log.d(TAG, "Calling startForeground")
         try {
-            windowManager?.updateViewLayout(overlayView, params)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                startForeground(
+                    NOTIFICATION_ID,
+                    createNotification(),
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+                )
+            } else {
+                startForeground(NOTIFICATION_ID, createNotification())
+            }
+            Log.d(TAG, "startForeground success")
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to update overlay mode", e)
+            Log.e(TAG, "startForeground failed", e)
+            throw e
         }
     }
 
-    private fun savePosition() {
-        val params = overlayParams ?: return
-        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        prefs.edit().apply {
-            putInt(KEY_OVERLAY_X, params.x)
-            putInt(KEY_OVERLAY_Y, params.y)
-            apply()
-        }
-    }
-
-    private fun saveSize() {
-        val params = overlayParams ?: return
-        val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        prefs.edit().apply {
-            putInt(KEY_OVERLAY_WIDTH, params.width)
-            putInt(KEY_OVERLAY_HEIGHT, params.height)
-            apply()
-        }
-    }
-
-    private fun removeOverlayView() {
-        if (controlBubbleView != null) {
-            try {
-                windowManager?.removeView(controlBubbleView)
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to remove control bubble", e)
+    private fun createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val name = "Floating Browser Service"
+            val descriptionText = "Transparent Floating Browser"
+            val importance = NotificationManager.IMPORTANCE_LOW
+            val channel = NotificationChannel(CHANNEL_ID, name, importance).apply {
+                description = descriptionText
             }
-            controlBubbleView = null
-            controlBubbleParams = null
-            controlBubble = null
+            val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            notificationManager.createNotificationChannel(channel)
         }
-
-        if (overlayView != null) {
-            try {
-                windowManager?.removeView(overlayView)
-            } catch (e: Exception) {
-                Log.e(TAG, "Failed to remove overlay", e)
-            }
-            overlayView = null
-            overlayParams = null
-        }
-
-        webViewController?.destroy()
-        webViewController = null
-    }
-
-    private fun cleanupOnFailure() {
-        if (controlBubbleView != null) {
-            try {
-                windowManager?.removeView(controlBubbleView)
-            } catch (e: Exception) {
-                Log.w(TAG, "Control bubble not attached or already removed during cleanup", e)
-            }
-            controlBubbleView = null
-            controlBubbleParams = null
-            controlBubble = null
-        }
-
-        if (overlayView != null) {
-            try {
-                windowManager?.removeView(overlayView)
-            } catch (e: Exception) {
-                Log.w(TAG, "Overlay not attached or already removed during cleanup", e)
-            }
-            overlayView = null
-            overlayParams = null
-        }
-
-        webViewController?.destroy()
-        webViewController = null
     }
 
     override fun onDestroy() {
+        Log.d(TAG, "onDestroy")
+
+        windows.values.toList().forEach { instance ->
+            destroyWindow(instance)
+        }
+        windows.clear()
+        activeWindowId = null
+
+        controlBubbleView?.let { view ->
+            try {
+                windowManager?.removeViewImmediate(view)
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed to remove control bubble", e)
+            }
+        }
+        controlBubbleView = null
+        controlBubble = null
+
         super.onDestroy()
-        removeOverlayView()
-        windowManager = null
     }
+
+    override fun onBind(intent: Intent?): IBinder? = null
 }

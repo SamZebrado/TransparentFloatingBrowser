@@ -26,4 +26,12 @@
     <string name="lang_switch_chinese">中文</string>
 
     <string name="url_input_label">URL</string>
+    <string name="control_button_size_label">Control Button Size (applies on next start)</string>
+    <string name="toast_restart_overlay_to_apply">Size will apply when you restart the overlay</string>
+    <string name="view_mode_alpha_label">View mode opacity</string>
+    <string name="toast_view_alpha_apply_next_view_mode">Opacity will apply next time you switch to View mode</string>
+    <string name="enable_zoom">Enable webpage pinch zoom</string>
+    <string name="transparent_colors_label">Transparent colors (comma separated)</string>
+    <string name="transparent_colors_hint">#000000, #FFFFFF, #CCCCCC</string>
+    <string name="toast_transparent_colors_apply">Transparent colors apply after restarting the floating window</string>
 </resources>

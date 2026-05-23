@@ -11,6 +11,8 @@ Displays specified web pages with transparent background, ideal for showing loca
 ## 功能 / Features
 - 透明背景 WebView 悬浮窗显示
 - Transparent background WebView overlay display
+- **多窗口支持：可同时显示多个悬浮窗口，最大支持3个窗口**
+- **Multi-window support: Can display multiple floating windows simultaneously, up to 3 windows**
 - 支持 EDIT / DISPLAY 两种模式切换
 - Supports EDIT / DISPLAY mode switching
 - 编辑模式下可拖动、缩放、点击网页
@@ -27,6 +29,10 @@ Displays specified web pages with transparent background, ideal for showing loca
 - Supports both HTTP and HTTPS URLs
 - 中英双语界面，可随时切换
 - Chinese and English bilingual interface, switchable at any time
+- **窗口配置导入/导出（JSON格式）**
+- **Window configuration import/export (JSON format)**
+- **窗口可见性控制**
+- **Window visibility control**
 
 ## 使用方法 / Usage
 1. 安装应用后，打开主界面
@@ -86,7 +92,10 @@ app/src/main/java/com/samzebrado/transparentfloatingbrowser/
 ├── OverlayControlBubble.kt       # 控制按钮 / Control button
 ├── TransparentStyleInjector.kt   # 透明样式注入 / Transparent style injection
 ├── AppPrefs.kt                  # 偏好设置 / App preferences
-└── LocaleHelper.kt              # 语言切换 / Language helper
+├── LocaleHelper.kt               # 语言切换 / Language helper
+├── FloatingWindowConfig.kt       # 窗口配置数据类 / Window configuration data class
+├── FloatingWindowInstance.kt     # 运行时窗口实例 / Runtime window instance
+└── OverlayMode.kt                # 模式枚举（EDIT/DISPLAY）/ Mode enum (EDIT/DISPLAY)
 ```
 
 ## 参考项目 / Referenced Projects
