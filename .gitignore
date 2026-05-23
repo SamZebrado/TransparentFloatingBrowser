@@ -17,6 +17,9 @@ local.properties
 *.aab
 captures/
 
+# Keep releases in repo
+!releases/*.apk
+
 # Signing keys
 *.jks
 *.keystore
