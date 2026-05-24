@@ -28,3 +28,6 @@ captures/
 
 # Logs
 *.log
+
+# Screenshots
+screenshots/
