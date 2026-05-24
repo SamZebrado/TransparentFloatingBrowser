@@ -2,6 +2,7 @@ package com.samzebrado.transparentfloatingbrowser
 
 import android.content.Context
 import android.graphics.Color
+import android.os.Build
 import android.util.Log
 import android.view.MotionEvent
 import android.view.View
@@ -25,6 +26,8 @@ class FloatingWebViewController(
 
     private var onPositionChangedListener: ((Int, Int) -> Unit)? = null
     private var onSizeChangedListener: ((Int, Int) -> Unit)? = null
+    private var onPositionChangeFinishedListener: (() -> Unit)? = null
+    private var onSizeChangeFinishedListener: (() -> Unit)? = null
     private var currentMode: OverlayMode = OverlayMode.EDIT
 
     private var initialX = 0
@@ -53,6 +56,14 @@ class FloatingWebViewController(
 
     fun setOnSizeChangedListener(listener: (Int, Int) -> Unit) {
         onSizeChangedListener = listener
+    }
+
+    fun setOnPositionChangeFinishedListener(listener: () -> Unit) {
+        onPositionChangeFinishedListener = listener
+    }
+
+    fun setOnSizeChangeFinishedListener(listener: () -> Unit) {
+        onSizeChangeFinishedListener = listener
     }
 
     private fun isZoomEnabled(): Boolean {
@@ -103,10 +114,12 @@ class FloatingWebViewController(
                 settings.loadWithOverviewMode = true
             }
 
+            settings.setSupportMultipleWindows(false)
+
             webViewClient = object : WebViewClient() {
                 override fun onPageFinished(view: WebView?, url: String?) {
                     super.onPageFinished(view, url)
-                    Log.d(TAG, "onPageFinished: $url")
+                    Log.d(TAG, "onPageFinished: $url, zoomEnabled: $zoomEnabled")
                     if (view != null) {
                         val colorKeys = getTransparentColors()
                         TransparentStyleInjector.inject(view, colorKeys) { result ->
@@ -155,7 +168,11 @@ class FloatingWebViewController(
                         true
                     }
                     MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                        val wasDragging = isDragging
                         isDragging = false
+                        if (wasDragging) {
+                            onPositionChangeFinishedListener?.invoke()
+                        }
                         true
                     }
                     else -> false
@@ -201,7 +218,11 @@ class FloatingWebViewController(
                         true
                     }
                     MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                        val wasResizing = isResizing
                         isResizing = false
+                        if (wasResizing) {
+                            onSizeChangeFinishedListener?.invoke()
+                        }
                         true
                     }
                     else -> false
@@ -232,6 +253,15 @@ class FloatingWebViewController(
         val visibility = if (visible) View.VISIBLE else View.GONE
         dragHandle?.visibility = visibility
         resizeHandle?.visibility = visibility
+        
+        // 在非编辑模式下，禁用WebView的触摸事件，确保能够穿透
+        webView?.isEnabled = visible
+        webView?.isClickable = visible
+        webView?.isFocusable = visible
+        webView?.isFocusableInTouchMode = visible
+        
+        containerView?.isEnabled = visible
+        containerView?.isClickable = visible
     }
 
     fun setInitialPosition(x: Int, y: Int) {

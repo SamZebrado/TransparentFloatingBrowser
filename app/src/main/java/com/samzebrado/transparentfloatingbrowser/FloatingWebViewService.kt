@@ -230,7 +230,8 @@ class FloatingWebViewService : Service() {
         params.y = config.y
 
         if (currentMode == OverlayMode.DISPLAY) {
-            params.flags = params.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+            params.flags = params.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                    WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
             params.alpha = config.viewModeAlpha / 100f
             controller.setEditHandlesVisible(false)
         } else {
@@ -270,6 +271,8 @@ class FloatingWebViewService : Service() {
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to update window position", e)
             }
+        }
+        controller.setOnPositionChangeFinishedListener {
             saveWindows()
         }
         controller.setOnSizeChangedListener { deltaW, deltaH ->
@@ -284,6 +287,8 @@ class FloatingWebViewService : Service() {
             } catch (e: Exception) {
                 Log.w(TAG, "Failed to update window size", e)
             }
+        }
+        controller.setOnSizeChangeFinishedListener {
             saveWindows()
         }
 
@@ -296,7 +301,7 @@ class FloatingWebViewService : Service() {
 
     private fun destroyWindow(instance: FloatingWindowInstance) {
         try {
-            if (instance.config.isVisible) {
+            if (instance.rootView.isAttachedToWindow) {
                 windowManager?.removeViewImmediate(instance.rootView)
             }
         } catch (e: Exception) {
@@ -325,10 +330,14 @@ class FloatingWebViewService : Service() {
         windows[windowId]?.let { instance ->
             instance.config.isVisible = isVisible
             
-            if (isVisible && !instance.rootView.isAttachedToWindow) {
-                windowManager?.addView(instance.rootView, instance.params)
-            } else if (!isVisible && instance.rootView.isAttachedToWindow) {
-                windowManager?.removeView(instance.rootView)
+            try {
+                if (isVisible && !instance.rootView.isAttachedToWindow) {
+                    windowManager?.addView(instance.rootView, instance.params)
+                } else if (!isVisible && instance.rootView.isAttachedToWindow) {
+                    windowManager?.removeView(instance.rootView)
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to update window visibility", e)
             }
             
             saveWindows()
@@ -360,7 +369,8 @@ class FloatingWebViewService : Service() {
             instance.controller.setEditHandlesVisible(true)
         } else {
             params.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                    WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+                    WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
+                    WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
             params.alpha = instance.config.viewModeAlpha / 100f
             instance.controller.setEditHandlesVisible(false)
         }
@@ -372,25 +382,6 @@ class FloatingWebViewService : Service() {
         }
     }
 
-    private fun setWindowVisibility(windowId: Int, visible: Boolean) {
-        windows[windowId]?.let { instance ->
-            if (instance.config.isVisible == visible) return
-
-            if (visible && !instance.config.isVisible) {
-                windowManager?.addView(instance.rootView, instance.params)
-            } else if (!visible && instance.config.isVisible) {
-                try {
-                    windowManager?.removeView(instance.rootView)
-                } catch (e: Exception) {
-                    Log.e(TAG, "Error removing window", e)
-                }
-            }
-
-            instance.config.isVisible = visible
-            saveWindows()
-        }
-    }
-
     private fun loadSavedWindows() {
         val prefs = getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
         val jsonString = prefs.getString(KEY_WINDOWS_JSON, null)
@@ -398,10 +389,31 @@ class FloatingWebViewService : Service() {
         if (jsonString != null) {
             try {
                 val jsonArray = JSONArray(jsonString)
+                val usedIds = mutableSetOf<Int>()
+                
                 for (i in 0 until jsonArray.length()) {
+                    if (windows.size >= MAX_WINDOWS) {
+                        Log.w(TAG, "Reached max windows ($MAX_WINDOWS), skipping remaining configs")
+                        break
+                    }
+                    
                     val configJson = jsonArray.getJSONObject(i)
-                    val config = FloatingWindowConfig.fromJson(configJson)
-                    addWindow(config)
+                    var config = FloatingWindowConfig.fromJson(configJson)
+                    
+                    // 处理重复ID
+                    if (usedIds.contains(config.id)) {
+                        var newId = 1
+                        while (usedIds.contains(newId) || windows.containsKey(newId)) {
+                            newId++
+                        }
+                        config = config.copy(id = newId)
+                        Log.w(TAG, "Duplicate window id, reassigning to $newId")
+                    }
+                    
+                    if (!windows.containsKey(config.id)) {
+                        addWindow(config)
+                        usedIds.add(config.id)
+                    }
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Error loading windows", e)
