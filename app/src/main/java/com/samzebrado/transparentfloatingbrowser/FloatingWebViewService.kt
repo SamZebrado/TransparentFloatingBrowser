@@ -8,6 +8,8 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.graphics.PixelFormat
+import android.graphics.Rect
+import android.hardware.input.InputManager
 import android.net.Uri
 import android.os.Build
 import android.os.IBinder
@@ -18,6 +20,8 @@ import android.view.View
 import android.view.WindowManager
 import androidx.core.app.NotificationCompat
 import org.json.JSONArray
+import kotlin.math.min
+import kotlin.math.pow
 
 class FloatingWebViewService : Service() {
 
@@ -108,6 +112,53 @@ class FloatingWebViewService : Service() {
     private var controlBubble: OverlayControlBubble? = null
     private var controlBubbleView: View? = null
     private var controlBubbleParams: WindowManager.LayoutParams? = null
+
+    private fun getMaxObscuringOpacityForTouch(): Float {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            getSystemService(InputManager::class.java)?.maximumObscuringOpacityForTouch ?: 1.0f
+        } else {
+            1.0f
+        }
+    }
+
+    private fun computeSafeAlpha(requestedAlpha: Float, overlapCount: Int): Float {
+        val requested = requestedAlpha.coerceIn(0f, 1f)
+
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+            return requested
+        }
+
+        val maxOpacity = getMaxObscuringOpacityForTouch()
+        val n = overlapCount.coerceAtLeast(1)
+
+        val perWindowMax = 1.0 - (1.0 - maxOpacity).pow(1.0 / n.toDouble())
+
+        val safeCap = (perWindowMax - 0.01).coerceIn(0.0, 1.0).toFloat()
+
+        return min(requested, safeCap)
+    }
+
+    private fun getWindowRect(instance: FloatingWindowInstance): Rect {
+        return Rect(
+            instance.params.x,
+            instance.params.y,
+            instance.params.x + instance.params.width,
+            instance.params.y + instance.params.height
+        )
+    }
+
+    private fun estimateOverlapCount(target: FloatingWindowInstance): Int {
+        val targetRect = getWindowRect(target)
+
+        val overlappingOthers = windows.values.count { other ->
+            other.id != target.id &&
+                    other.config.isVisible &&
+                    other.rootView.isAttachedToWindow &&
+                    Rect.intersects(targetRect, getWindowRect(other))
+        }
+
+        return 1 + overlappingOthers
+    }
 
     private fun normalizeUrlOrNull(rawUrl: String?): String? {
         val trimmed = rawUrl?.trim().orEmpty()
@@ -231,7 +282,9 @@ class FloatingWebViewService : Service() {
 
         if (currentMode == OverlayMode.DISPLAY) {
             params.flags = params.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
-            params.alpha = config.viewModeAlpha / 100f
+            val requestedAlpha = config.viewModeAlpha / 100f
+            val overlapCount = windows.size.coerceAtLeast(1)
+            params.alpha = computeSafeAlpha(requestedAlpha, overlapCount)
             controller.setEditHandlesVisible(false)
         } else {
             params.alpha = 1f
@@ -369,7 +422,9 @@ class FloatingWebViewService : Service() {
         } else {
             params.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                     WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
-            params.alpha = instance.config.viewModeAlpha / 100f
+            val requestedAlpha = instance.config.viewModeAlpha / 100f
+            val overlapCount = estimateOverlapCount(instance)
+            params.alpha = computeSafeAlpha(requestedAlpha, overlapCount)
             instance.controller.setEditHandlesVisible(false)
         }
 
