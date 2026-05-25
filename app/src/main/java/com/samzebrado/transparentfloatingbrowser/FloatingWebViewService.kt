@@ -230,8 +230,7 @@ class FloatingWebViewService : Service() {
         params.y = config.y
 
         if (currentMode == OverlayMode.DISPLAY) {
-            params.flags = params.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
-                    WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
+            params.flags = params.flags or WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
             params.alpha = config.viewModeAlpha / 100f
             controller.setEditHandlesVisible(false)
         } else {
@@ -369,8 +368,7 @@ class FloatingWebViewService : Service() {
             instance.controller.setEditHandlesVisible(true)
         } else {
             params.flags = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
-                    WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE or
-                    WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL
+                    WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
             params.alpha = instance.config.viewModeAlpha / 100f
             instance.controller.setEditHandlesVisible(false)
         }

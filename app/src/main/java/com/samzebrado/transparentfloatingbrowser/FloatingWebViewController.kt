@@ -253,15 +253,6 @@ class FloatingWebViewController(
         val visibility = if (visible) View.VISIBLE else View.GONE
         dragHandle?.visibility = visibility
         resizeHandle?.visibility = visibility
-        
-        // 在非编辑模式下，禁用WebView的触摸事件，确保能够穿透
-        webView?.isEnabled = visible
-        webView?.isClickable = visible
-        webView?.isFocusable = visible
-        webView?.isFocusableInTouchMode = visible
-        
-        containerView?.isEnabled = visible
-        containerView?.isClickable = visible
     }
 
     fun setInitialPosition(x: Int, y: Int) {
