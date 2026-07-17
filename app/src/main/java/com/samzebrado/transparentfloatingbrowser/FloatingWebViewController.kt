@@ -7,6 +7,8 @@ import android.util.Log
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
+import android.webkit.CookieManager
+import android.webkit.WebChromeClient
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.FrameLayout
@@ -96,6 +98,11 @@ class FloatingWebViewController(
 
         val zoomEnabled = isZoomEnabled()
 
+        // 配置Cookie持久化
+        CookieManager.getInstance().apply {
+            setAcceptCookie(true)
+        }
+
         webView = WebView(context).apply {
             setBackgroundColor(Color.TRANSPARENT)
             isVerticalScrollBarEnabled = false
@@ -104,6 +111,11 @@ class FloatingWebViewController(
             settings.javaScriptEnabled = true
             settings.domStorageEnabled = true
             settings.mediaPlaybackRequiresUserGesture = false
+            settings.allowContentAccess = true
+            settings.allowFileAccess = true
+            
+            // 后台保持媒体流活跃（摄像头不会被暂停）
+            settings.setMediaPlaybackRequiresUserGesture(false)
 
             settings.setSupportZoom(zoomEnabled)
             settings.builtInZoomControls = zoomEnabled
@@ -116,6 +128,35 @@ class FloatingWebViewController(
 
             settings.setSupportMultipleWindows(false)
 
+            // 必须在WebView创建后才能调用
+            CookieManager.getInstance().setAcceptThirdPartyCookies(this, true)
+
+            // WebChromeClient 处理权限请求（摄像头、麦克风、位置等）
+            webChromeClient = object : WebChromeClient() {
+                override fun onGeolocationPermissionsShowPrompt(
+                    origin: String?,
+                    callback: android.webkit.GeolocationPermissions.Callback?
+                ) {
+                    Log.d(TAG, "Geolocation permission request from: $origin")
+                    callback?.invoke(origin, true, false)
+                }
+
+                override fun onPermissionRequest(request: android.webkit.PermissionRequest?) {
+                    Log.d(TAG, "Permission request: ${request?.resources?.joinToString()}")
+                    // 允许所有权限请求（摄像头、麦克风等）
+                    request?.grant(request.resources)
+                }
+                
+                // 自定义WebView回调，用于保持摄像头活跃
+                override fun onShowCustomView(view: View?, callback: WebChromeClient.CustomViewCallback?) {
+                    Log.d(TAG, "onShowCustomView called")
+                }
+                
+                override fun onHideCustomView() {
+                    Log.d(TAG, "onHideCustomView called")
+                }
+            }
+
             webViewClient = object : WebViewClient() {
                 override fun onPageFinished(view: WebView?, url: String?) {
                     super.onPageFinished(view, url)
@@ -123,11 +164,30 @@ class FloatingWebViewController(
                     if (view != null) {
                         val colorKeys = getTransparentColors()
                         TransparentStyleInjector.inject(view, colorKeys) { result ->
-                            Log.d(TAG, "Transparent injection result: $result")
+                            Log.d(TAG, "Transparent injection result (0ms): $result")
                         }
+                        view.postDelayed({
+                            TransparentStyleInjector.applyTransparency(view) { result ->
+                                Log.d(TAG, "Transparent reapply result (250ms): $result")
+                            }
+                        }, 250)
+                        view.postDelayed({
+                            TransparentStyleInjector.applyTransparency(view) { result ->
+                                Log.d(TAG, "Transparent reapply result (1000ms): $result")
+                            }
+                        }, 1000)
+                        view.postDelayed({
+                            TransparentStyleInjector.applyTransparency(view) { result ->
+                                Log.d(TAG, "Transparent reapply result (3000ms): $result")
+                            }
+                        }, 3000)
                     }
                 }
             }
+            
+            // 强制WebView保持活跃，防止后台暂停
+            setLayerType(View.LAYER_TYPE_HARDWARE, null)
+            onResume()
         }
 
         dragHandle = View(context).apply {
@@ -263,6 +323,24 @@ class FloatingWebViewController(
     fun setInitialSize(width: Int, height: Int) {
         initialWidth = width
         initialHeight = height
+    }
+
+    /**
+     * 保持WebView在后台活跃，防止JavaScript和媒体流被暂停
+     * 当悬浮窗切换到后台时调用此方法
+     */
+    fun keepActiveInBackground() {
+        webView?.onResume()
+        webView?.settings?.setMediaPlaybackRequiresUserGesture(false)
+        Log.d(TAG, "WebView kept active in background")
+    }
+
+    /**
+     * WebView进入前台时恢复
+     */
+    fun resumeFromBackground() {
+        webView?.onResume()
+        Log.d(TAG, "WebView resumed from background")
     }
 
     fun destroy() {
