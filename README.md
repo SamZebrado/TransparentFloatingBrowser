@@ -83,11 +83,32 @@ Displays specified web pages with transparent background, ideal for showing loca
 - Overlay permission requires manual user authorization
 
 ## 构建 / Build
+
+### 构建环境 / Build Environment
+- Gradle Wrapper: 8.4
+- Android Gradle Plugin (AGP): 8.2.1
+- Kotlin: 1.9.22
+- Java / JDK: 17
+- compileSdk: 34
+- targetSdk: 34
+- minSdk: 27
+
+### 构建命令 / Build Command
 ```bash
-./gradlew assembleDebug
+./gradlew :app:assembleDebug
 ```
-构建完成后，APK 文件位于 app/build/outputs/apk/debug/app-debug.apk
-After building, the APK is located at app/build/outputs/apk/debug/app-debug.apk
+
+构建完成后，APK 文件位于：
+After building, the APK is located at:
+```
+app/build/outputs/apk/debug/app-debug.apk
+```
+
+### 已验证构建环境 / Verified Build Environment
+- macOS (Apple Silicon aarch64)
+- JDK 17 (Homebrew OpenJDK 17.0.19)
+- Gradle 8.4 (via wrapper)
+- 构建状态：BUILD SUCCESSFUL / Build status: BUILD SUCCESSFUL
 
 ## Android 12+ 触摸穿透与透明度限制
 ## Android 12+ Touch Pass-through and Opacity Limitation
@@ -128,10 +149,12 @@ This app automatically calculates a safe alpha value in DISPLAY mode to reduce t
 Note: The more overlapping windows, the lower the safe opacity per window.
 
 ## 已验证环境 / Tested Environment
-- 小米平板 (Android)
-- Xiaomi Tablet (Android)
+- 小米平板 (Android) / Xiaomi Tablet (Android)
 - Android SDK 34
-- Android SDK 34
+- macOS Apple Silicon (aarch64)
+- JDK 17 (Homebrew OpenJDK 17.0.19)
+- Gradle 8.4 (via wrapper)
+- AGP 8.2.1 / Kotlin 1.9.22
 
 ## 已知限制 / Known Limitations
 - DISPLAY 模式下蓝色拖动条和黄色缩放手柄会隐藏
