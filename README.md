@@ -8,6 +8,11 @@ A lightweight, efficient floating WebView browser with transparent background su
 可显示指定网页，支持透明背景，适用于显示本地心跳页面等场景。
 Displays specified web pages with transparent background, ideal for showing local heartbeat pages and similar use cases.
 
+## 项目状态 / Project status
+
+核心功能已完成；当前处于问题反馈与 bug 修复维护阶段。
+The core feature set is complete; the project is in feedback and bug-fix maintenance.
+
 ## 功能 / Features
 - 透明背景 WebView 悬浮窗显示
 - Transparent background WebView overlay display
@@ -75,8 +80,8 @@ Displays specified web pages with transparent background, ideal for showing loca
 - WebView has JavaScript enabled
 - 本应用未使用 addJavascriptInterface，无原生桥接风险
 - This app does not use addJavascriptInterface, no native bridge security risk
-- HTTP cleartext 支持仅用于局域网本地工具场景
-- HTTP cleartext support is for local LAN tool scenarios only
+- HTTP 明文支持用于局域网本地工具场景，但当前网络配置允许任意来源的 HTTP URL，并未强制限制为局域网
+- HTTP cleartext support is intended for local LAN tools, but the current network configuration permits HTTP URLs from any origin and does not enforce a LAN restriction
 - 请勿在悬浮窗口中输入敏感信息（如密码、Token）
 - Do not enter sensitive information (passwords, tokens) in the floating window
 - 悬浮窗权限需要用户手动授权
