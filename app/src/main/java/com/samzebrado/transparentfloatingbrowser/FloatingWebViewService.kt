@@ -411,6 +411,7 @@ class FloatingWebViewService : Service() {
     }
 
     private fun applyModeToWindow(instance: FloatingWindowInstance) {
+        instance.controller.setMode(currentMode)
         if (!instance.config.isVisible) return
 
         val params = instance.params

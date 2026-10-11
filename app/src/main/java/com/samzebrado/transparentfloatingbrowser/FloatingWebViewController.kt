@@ -2,12 +2,15 @@ package com.samzebrado.transparentfloatingbrowser
 
 import android.content.Context
 import android.graphics.Color
+import android.graphics.Bitmap
 import android.os.Build
 import android.util.Log
 import android.view.MotionEvent
 import android.view.View
 import android.view.ViewGroup
 import android.webkit.CookieManager
+import android.webkit.JsPromptResult
+import android.webkit.JsResult
 import android.webkit.WebChromeClient
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -31,6 +34,9 @@ class FloatingWebViewController(
     private var onPositionChangeFinishedListener: (() -> Unit)? = null
     private var onSizeChangeFinishedListener: (() -> Unit)? = null
     private var currentMode: OverlayMode = OverlayMode.EDIT
+    private val jsDialogs = OverlayJsDialogs(context) {
+        currentMode == OverlayMode.EDIT && containerView?.isAttachedToWindow == true
+    }
 
     private var initialX = 0
     private var initialY = 0
@@ -50,6 +56,7 @@ class FloatingWebViewController(
 
     fun setMode(mode: OverlayMode) {
         currentMode = mode
+        if (mode == OverlayMode.DISPLAY) jsDialogs.cancel()
     }
 
     fun setOnPositionChangedListener(listener: (Int, Int) -> Unit) {
@@ -94,6 +101,12 @@ class FloatingWebViewController(
     fun createView(): View {
         containerView = FrameLayout(context).apply {
             setBackgroundColor(Color.TRANSPARENT)
+            addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+                override fun onViewAttachedToWindow(view: View) = Unit
+                override fun onViewDetachedFromWindow(view: View) {
+                    jsDialogs.cancel()
+                }
+            })
         }
 
         val zoomEnabled = isZoomEnabled()
@@ -133,6 +146,15 @@ class FloatingWebViewController(
 
             // WebChromeClient 处理权限请求（摄像头、麦克风、位置等）
             webChromeClient = object : WebChromeClient() {
+                override fun onJsPrompt(view: WebView?, url: String?, message: String?, defaultValue: String?, result: JsPromptResult): Boolean =
+                    jsDialogs.prompt(url, message, defaultValue, result)
+
+                override fun onJsAlert(view: WebView?, url: String?, message: String?, result: JsResult): Boolean =
+                    jsDialogs.alert(url, message, result)
+
+                override fun onJsConfirm(view: WebView?, url: String?, message: String?, result: JsResult): Boolean =
+                    jsDialogs.confirm(url, message, result)
+
                 override fun onGeolocationPermissionsShowPrompt(
                     origin: String?,
                     callback: android.webkit.GeolocationPermissions.Callback?
@@ -158,6 +180,11 @@ class FloatingWebViewController(
             }
 
             webViewClient = object : WebViewClient() {
+                override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
+                    jsDialogs.cancel()
+                    super.onPageStarted(view, url, favicon)
+                }
+
                 override fun onPageFinished(view: WebView?, url: String?) {
                     super.onPageFinished(view, url)
                     Log.d(TAG, "onPageFinished: $url, zoomEnabled: $zoomEnabled")
@@ -300,6 +327,7 @@ class FloatingWebViewController(
     }
 
     fun loadUrl(url: String) {
+        jsDialogs.cancel()
         webView?.loadUrl(url)
     }
 
@@ -344,6 +372,8 @@ class FloatingWebViewController(
     }
 
     fun destroy() {
+        currentMode = OverlayMode.DISPLAY
+        jsDialogs.cancel()
         webView?.let { wv ->
             wv.stopLoading()
             wv.loadUrl("about:blank")
